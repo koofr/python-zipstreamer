@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 
+# pylint: skip-file
+# flake8: noqa
+
 """
 compat
 ~~~~~~~~~~~~~~~
@@ -29,9 +32,9 @@ IS_PY3 = (_VER[0] == 3)
 if IS_PY2:
     from StringIO import StringIO as BytesIO
 
-    str = unicode  # pylint: disable=redefined-builtin,invalid-name
+    str = unicode
 
 elif IS_PY3:
     from io import BytesIO
 
-    str = str  # pylint: disable=redefined-builtin,invalid-name
+    str = str
