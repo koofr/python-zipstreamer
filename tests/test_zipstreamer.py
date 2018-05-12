@@ -133,6 +133,19 @@ class TestZipStream(unittest.TestCase):
 
         self.assertEqual(z.size(), len(data.getvalue()))
 
+    def test_generate_empty(self):
+        z = ZipStream(files=[])
+
+        data = BytesIO()
+
+        for chunk in z.generate():
+            data.write(chunk)
+
+        zf = zipfile.ZipFile(BytesIO(data.getvalue()))
+
+        self.assertEqual(zf.infolist(), [])
+        self.assertEqual(z.size(), len(data.getvalue()))
+
     def test_generate_zip64_size(self):
         z = ZipStream(files=[
             ZipFile(b'file.txt', 5 * 1024 * 1024 * 1024, lambda: None, datetime.datetime(2008, 11, 10, 17, 53, 59), None),
