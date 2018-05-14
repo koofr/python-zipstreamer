@@ -9,7 +9,9 @@ import unittest
 import zipfile
 
 from zipstreamer import (
-    ZipStream, ZipFile, FileNameTooLong, ZipFileSizeRequired, ZipFileInProgress)
+    ZipStream, ZipFile, FileNameTooLong, ZipFileSizeRequired,
+    ZipFileInProgress, ZipFileSkip
+)
 from zipstreamer.compat import BytesIO, IS_PY2
 
 
@@ -180,6 +182,28 @@ class TestZipStream(unittest.TestCase):
         with self.assertRaises(FileNameTooLong):
             for _ in z.generate():
                 pass
+
+    def test_skip(self):
+        def skip():
+            raise ZipFileSkip()
+
+        z = ZipStream(files=[
+            ZipFile('file.txt', 4, lambda: BytesIO(b'test'), datetime.datetime(2008, 11, 10, 17, 53, 59), None),
+            ZipFile('dir/', None, None, datetime.datetime(2011, 4, 16, 6, 24, 31), None),
+            ZipFile(u'dir/skip', 3, skip, datetime.datetime(2011, 4, 16, 6, 24, 31), b'lorem ipsum'),
+        ])
+
+        calculated_size = z.size()
+
+        data = BytesIO()
+
+        for chunk in z.generate():
+            data.write(chunk)
+
+        zf = zipfile.ZipFile(BytesIO(data.getvalue()))
+
+        self.assertEqual(len(zf.infolist()), 2)
+        self.assertNotEqual(calculated_size, len(data.getvalue()))
 
     def test_size_required(self):
         z = ZipStream(files=[

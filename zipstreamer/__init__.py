@@ -88,6 +88,16 @@ class ZipFileBytesRequired(ZipStreamError):
     pass
 
 
+class ZipFileSkip(Exception):
+    """
+    ZipFileSkip can be used to skip the file when ``create_fp`` is called.
+    It should not be used when ``.size()`` is used.
+    """
+
+    def __init__(self):
+        super(ZipFileSkip, self).__init__('Skip the file')
+
+
 ZipFile = namedtuple('ZipFile', [
     'filename', 'size', 'create_fp', 'datetime', 'comment',
 ])
@@ -149,46 +159,12 @@ class ZipStream(object):
         return buf
 
     def _generate_file(self, zip_file):
-        offset = self._pos
-
-        file_dt = zip_file.datetime
-
-        if isinstance(file_dt, datetime.datetime):
-            file_dt = file_dt.timetuple()
-
-        if file_dt is None:
-            file_dt = time.localtime(time.time())
-
-        create_version = ZIP_VERSION_20
-        extract_version = ZIP_VERSION_20
-
         filename, flag_bits = encode_filename_flags(zip_file.filename, 8)
 
         if len(filename) > UINT16_MAX:
             raise FileNameTooLong('File name is too long: %d' % len(filename))
 
-        extra = b''
-
-        ext_time_extra_modtime = int(calendar.timegm(file_dt))
-        ext_time_extra = struct.pack(
-            STRUCT_EXT_TIME_EXTRA, EXT_TIME_EXTRA_ID, EXT_TIME_EXTRA_SIZE,
-            EXT_TIME_EXTRA_FLAGS, ext_time_extra_modtime)
-        extra += ext_time_extra
-
-        dosdate = (file_dt[0] - 1980) << 9 | file_dt[1] << 5 | file_dt[2]
-        dostime = file_dt[3] << 11 | file_dt[4] << 5 | (file_dt[5] // 2)
-
-        header = struct.pack(
-            STRUCT_FILE_HEADER, STRING_FILE_HEADER, extract_version, 0,
-            flag_bits, ZIP_MODE_STORED, dostime, dosdate, 0, 0, 0,
-            len(filename), len(extra))
-
-        yield self._incr(header)
-        yield self._incr(filename)
-        yield self._incr(extra)
-
-        file_crc = 0
-        file_size = 0
+        file_obj = None
 
         if zip_file.create_fp is not None:
             if self._calculate_size:
@@ -196,29 +172,69 @@ class ZipStream(object):
                     raise ZipFileSizeRequired(
                         'ZipFile.size is required to calculate zip file'
                         ' size: %s' % filename)
-
-                file_size = zip_file.size
-                self._pos += zip_file.size
             else:
-                file_obj = zip_file.create_fp()
-
                 try:
-                    while True:
-                        buf = file_obj.read(4096)
-                        if not buf:
-                            break
+                    file_obj = zip_file.create_fp()
+                except ZipFileSkip:
+                    return
 
-                        if isinstance(buf, str):
-                            raise ZipFileBytesRequired(
-                                'File object should contain bytes')
+        try:
+            offset = self._pos
 
-                        file_size = file_size + len(buf)
-                        file_crc = crc32(buf, file_crc) & 0xffffffff
+            file_dt = zip_file.datetime
 
-                        yield self._incr(buf)
-                finally:
-                    if hasattr(file_obj, 'close'):
-                        file_obj.close()
+            if isinstance(file_dt, datetime.datetime):
+                file_dt = file_dt.timetuple()
+
+            if file_dt is None:
+                file_dt = time.localtime(time.time())
+
+            create_version = ZIP_VERSION_20
+            extract_version = ZIP_VERSION_20
+
+            extra = b''
+
+            ext_time_extra_modtime = int(calendar.timegm(file_dt))
+            ext_time_extra = struct.pack(
+                STRUCT_EXT_TIME_EXTRA, EXT_TIME_EXTRA_ID, EXT_TIME_EXTRA_SIZE,
+                EXT_TIME_EXTRA_FLAGS, ext_time_extra_modtime)
+            extra += ext_time_extra
+
+            dosdate = (file_dt[0] - 1980) << 9 | file_dt[1] << 5 | file_dt[2]
+            dostime = file_dt[3] << 11 | file_dt[4] << 5 | (file_dt[5] // 2)
+
+            header = struct.pack(
+                STRUCT_FILE_HEADER, STRING_FILE_HEADER, extract_version, 0,
+                flag_bits, ZIP_MODE_STORED, dostime, dosdate, 0, 0, 0,
+                len(filename), len(extra))
+
+            yield self._incr(header)
+            yield self._incr(filename)
+            yield self._incr(extra)
+
+            file_crc = 0
+            file_size = 0
+
+            if zip_file.create_fp is not None and self._calculate_size:
+                file_size = zip_file.size
+                self._pos += file_size
+            elif file_obj is not None:
+                while True:
+                    buf = file_obj.read(4096)
+                    if not buf:
+                        break
+
+                    if isinstance(buf, str):
+                        raise ZipFileBytesRequired(
+                            'File object should contain bytes')
+
+                    file_size = file_size + len(buf)
+                    file_crc = crc32(buf, file_crc) & 0xffffffff
+
+                    yield self._incr(buf)
+        finally:
+            if hasattr(file_obj, 'close'):
+                file_obj.close()
 
         is_zip64 = file_size > UINT32_MAX
 
